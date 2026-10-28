@@ -1,0 +1,67 @@
+# Caddy reverse proxy for Local Clipper (hosted mode). Automatic HTTPS (Let's Encrypt/ZeroSSL)
+# for {$CLIPPER_HOSTNAME}; ports 80 and 443 must be reachable from the internet and the DNS
+# A/AAAA record must point at this server. See DEPLOYMENT.md.
+{
+	# Optional: address for certificate expiry notices.
+	# email you@example.com
+
+	servers {
+		timeouts {
+			read_header 30s
+			# Large uploads and downloads on slow connections.
+			read_body 2h
+			write 2h
+			idle 5m
+		}
+	}
+}
+
+{$CLIPPER_HOSTNAME} {
+	# Upload limit at the edge; the app enforces CLIPPER_MAX_UPLOAD_MB itself as well.
+	request_body {
+		max_size {$CLIPPER_MAX_UPLOAD_MB:4096}MiB
+	}
+
+	# Compress text only, never video/images/archives.
+	encode {
+		zstd
+		gzip
+		match {
+			header Content-Type text/*
+			header Content-Type application/json*
+			header Content-Type application/javascript*
+			header Content-Type image/svg+xml*
+		}
+	}
+
+	header {
+		# One year, this host only (no includeSubDomains/preload: other hosts under the parent domain are unaffected).
+		Strict-Transport-Security "max-age=31536000"
+		-Server
+	}
+
+	# The api listens on CLIPPER_PORT (compose passes the same value to both containers).
+	reverse_proxy api:{$CLIPPER_PORT:8765} {
+		# Stream responses (video range requests, ZIP exports) without buffering.
+		flush_interval -1
+		transport http {
+			dial_timeout 10s
+			response_header_timeout 15m
+			read_timeout 30m
+			write_timeout 30m
+		}
+	}
+
+	# Access log without query strings, cookies or authorization headers.
+	log {
+		output stdout
+		format filter {
+			wrap json
+			request>uri regexp "\?.*$" ""
+			request>headers>Cookie delete
+			request>headers>Authorization delete
+			request>headers>Referer delete
+			resp_headers>Set-Cookie delete
+		}
+	}
+}

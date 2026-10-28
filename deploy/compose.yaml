@@ -1,0 +1,110 @@
+# Local Clipper - hosted deployment: one API, one worker, Caddy for HTTPS. See DEPLOYMENT.md.
+#
+#   cp deploy/env.hosted.example deploy/.env.hosted      # then fill in the secrets
+#   docker compose --env-file deploy/.env.hosted -f deploy/compose.yaml up -d --build
+#
+# --env-file provides CLIPPER_HOSTNAME / CLIPPER_MAX_UPLOAD_MB / CLIPPER_PORT to the proxy (compose
+# variable substitution); the app containers read the whole file through env_file.
+#
+# Network layout
+# * Only the proxy publishes ports (80/443). The api and worker publish nothing.
+# * "internal" (internal: true, no outbound internet): proxy <-> api only.
+# * "egress": the worker needs outbound HTTPS (api.openai.com, YouTube), so it cannot sit on an
+#   internal-only network; it is still unreachable from outside because nothing is published.
+#   The api and the worker never talk over the network; they share the SQLite database and media
+#   on the clipper_data volume (one host, local disk).
+# * Single replica of each service: SQLite and the job queue assume one API and one worker.
+
+name: local-clipper
+
+services:
+  api:
+    image: ${CLIPPER_IMAGE:-local-clipper:latest}
+    build:
+      context: ..
+      dockerfile: deploy/Dockerfile
+    env_file:
+      - path: .env.hosted
+        required: true
+    environment:
+      # The same substituted value Caddy dials (api:{$CLIPPER_PORT}), so the two cannot drift
+      # apart even when CLIPPER_PORT is also set in the shell running compose.
+      CLIPPER_PORT: ${CLIPPER_PORT:-8765}
+    volumes:
+      - clipper_data:/data
+    expose:
+      - "${CLIPPER_PORT:-8765}"
+    networks:
+      - internal
+    restart: unless-stopped
+    stop_grace_period: 20s
+    healthcheck:
+      test: ["CMD", "python", "-m", "clipper.cli", "health", "--quiet"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+
+  worker:
+    image: ${CLIPPER_IMAGE:-local-clipper:latest}
+    command: ["python", "-m", "clipper.worker"]
+    env_file:
+      - path: .env.hosted
+        required: true
+    volumes:
+      - clipper_data:/data
+    networks:
+      - egress
+    restart: unless-stopped
+    # SIGTERM -> the worker stops FFmpeg and marks its job "interrupted" (resumable).
+    stop_grace_period: 30s
+    depends_on:
+      api:
+        condition: service_started
+    healthcheck:
+      test: ["CMD", "python", "-m", "clipper.cli", "health", "--worker", "--quiet"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 60s
+
+  proxy:
+    image: caddy:2
+    ports:
+      - "80:80"
+      - "443:443"
+      - "443:443/udp"
+    environment:
+      CLIPPER_HOSTNAME: ${CLIPPER_HOSTNAME:?Set CLIPPER_HOSTNAME in deploy/.env.hosted and pass --env-file deploy/.env.hosted}
+      CLIPPER_MAX_UPLOAD_MB: ${CLIPPER_MAX_UPLOAD_MB:-4096}
+      CLIPPER_PORT: ${CLIPPER_PORT:-8765}
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy_data:/data
+      - caddy_config:/config
+    networks:
+      internal:
+        # Must match CLIPPER_TRUSTED_PROXIES in deploy/.env.hosted. Override CLIPPER_PROXY_SUBNET /
+        # CLIPPER_PROXY_IP if the default subnet collides with another network on the host.
+        ipv4_address: ${CLIPPER_PROXY_IP:-172.30.57.10}
+      edge: {}
+    depends_on:
+      api:
+        condition: service_healthy
+    # No container healthcheck for Caddy (the official image has none); check it end to end with
+    # the smoke test in DEPLOYMENT.md (curl https://<hostname>/api/health).
+    restart: unless-stopped
+
+networks:
+  internal:
+    internal: true
+    ipam:
+      config:
+        - subnet: ${CLIPPER_PROXY_SUBNET:-172.30.57.0/24}
+  egress: {}
+  edge: {}
+
+volumes:
+  clipper_data: {}
+  caddy_data: {}
+  caddy_config: {}

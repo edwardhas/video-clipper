@@ -1,0 +1,33 @@
+[project]
+name = "local-clipper"
+version = "0.1.0"
+description = "Local Clipper: personal long-video to vertical-clip tool (FastAPI backend + worker)"
+requires-python = ">=3.12,<3.14"
+dependencies = [
+  "fastapi>=0.142",
+  "uvicorn[standard]>=0.54",
+  "pydantic>=2.13",
+  "pydantic-settings>=2.15",
+  "openai>=3.24",
+  "yt-dlp[default]>=2026.8.19",
+  "opencv-python-headless>=4.10,<5",
+  "numpy>=2.3",
+  "pillow>=12.0",
+  "argon2-cffi>=25.1",
+  "httpx>=0.28",
+]
+
+[project.optional-dependencies]
+dev = [
+  "pytest>=9.0",
+  "pytest-timeout>=2.3",
+]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+markers = [
+  "ffmpeg: real FFmpeg integration tests",
+  "live: tests that call the real OpenAI API (opt-in via CLIPPER_LIVE_TESTS=1)",
+  "network: tests that require internet access",
+]
+timeout = 300

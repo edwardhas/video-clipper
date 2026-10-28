@@ -1,0 +1,36 @@
+# Secrets and local config
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+
+# Runtime data (projects, media, database); `cli restore` keeps the previous data as data.bak-<ts>
+/data/
+/data.bak-*/
+*.db
+*.db-journal
+*.db-wal
+*.db-shm
+
+# Python
+backend/.venv/
+__pycache__/
+*.pyc
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+
+# Node
+frontend/node_modules/
+frontend/dist/
+frontend/test-results/
+frontend/playwright-report/
+
+tests-media/
+
+# Validation screenshots are kept locally only
+docs/validation/*.jpg
+
+# OS
+.DS_Store
